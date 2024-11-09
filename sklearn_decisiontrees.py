@@ -1,5 +1,6 @@
 
 from sklearn.datasets import load_iris
+from sklearn.datasets import load_digits
 from sklearn import tree
 from sklearn.model_selection import KFold
 from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
@@ -8,9 +9,13 @@ from sklearn.model_selection import GridSearchCV, KFold
 import joblib
 
 
+
+
+
+'''
+Original K-Fold
 ### This code shows how to use KFold to do cross_validation.
 ### This is just one of many ways to manage training and test sets in sklearn.
-
 iris = load_iris()
 X, y = iris.data, iris.target
 scores = []
@@ -21,8 +26,42 @@ for train_index, test_index in kf.split(X) :
     clf = tree.DecisionTreeClassifier()
     clf.fit(X_train, y_train)
     scores.append(clf.score(X_test, y_test))
-
 print(scores)
+
+NEW: a) test 5, 10, 15, and 20 estimators for Random Forest. b) test 25, 50, 75, and 100 iterations for Histogram Boosting. c) do 5 splits.
+'''
+
+# change to a more complex dataset --> load_digits
+# digits.data contains the feature matrix where each row represents an image, and each column represents a pixel intensity.
+# digits.target contains the labels (digits from 0 to 9).
+digits = load_digits()
+X, y = digits.data, digits.target
+
+scores = []
+kf = KFold(n_splits=5)
+
+# The outer loops iterate over the criteria and the number of estimators.
+for criterion in ['gini', 'entropy']:
+    for n_estimators in [10, 25, 50]:
+        fold_scores = []
+        # The inner loop performs the K-Fold cross-validation.
+        for train_index, test_index in kf.split(X):
+            X_train, X_test = X[train_index], X[test_index]
+            y_train, y_test = y[train_index], y[test_index]
+            clf = RandomForestClassifier(n_estimators=n_estimators, criterion=criterion)
+            clf.fit(X_train, y_train)
+            fold_scores.append(clf.score(X_test, y_test))
+
+        # Scores are collected and averaged over the folds.
+        avg_score = sum(fold_scores) / len(fold_scores)
+        scores.append({
+            'Criterion': criterion,
+            'Estimators': n_estimators,
+            'Score': avg_score
+        })
+print(scores)
+
+
 
 ## Part 2. This code (from https://scikit-learn.org/1.5/auto_examples/ensemble/plot_forest_hist_grad_boosting_comparison.html)
 ## shows how to use GridSearchCV to do a hyperparameter search to compare two techniques.
@@ -41,11 +80,20 @@ models = {
         max_leaf_nodes=15, random_state=0, early_stopping=False
     ),
 }
+# Original grids
+# param_grids = {
+#     "Random Forest": {"n_estimators": [10, 20, 50, 100]},
+#     "Hist Gradient Boosting": {"max_iter": [10, 20, 50, 100, 300, 500]},
+# }
+
 param_grids = {
-    "Random Forest": {"n_estimators": [10, 20, 50, 100]},
-    "Hist Gradient Boosting": {"max_iter": [10, 20, 50, 100, 300, 500]},
+    "Random Forest": {"n_estimators": [5, 10, 15, 20]},
+    "Hist Gradient Boosting": {"max_iter": [25, 50, 75, 100]},
 }
-cv = KFold(n_splits=2, shuffle=True, random_state=0)
+
+# Original splits = 2
+# cv = KFold(n_splits=2, shuffle=True, random_state=0)
+cv = KFold(n_splits=5, shuffle=True, random_state=0)
 
 results = []
 for name, model in models.items():

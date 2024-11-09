@@ -53,6 +53,24 @@ alarm_model.add_cpds(
 alarm_infer = VariableElimination(alarm_model)
 
 print(alarm_infer.query(variables=["JohnCalls"],evidence={"Earthquake":"yes"}))
-q = alarm_infer.query(variables=["JohnCalls", "Earthquake"],evidence={"Burglary":"yes","MaryCalls":"yes"}))
+q = alarm_infer.query(variables=["JohnCalls", "Earthquake"],evidence={"Burglary":"yes","MaryCalls":"yes"})
 print(q)
 
+
+"""
+VariableElimination: Used for exact inference in Bayesian Networks.
+query Method: Calculates the posterior distribution of the target variables given evidence.
+"""
+# Probability of Mary Calling Given John Called
+result1 = alarm_infer.query(variables=["MaryCalls"], evidence={"JohnCalls": "yes"})
+
+# Probability of Both John and Mary Calling Given Alarm
+result2 = alarm_infer.query(variables=["JohnCalls", "MaryCalls"], evidence={"Alarm": "yes"})
+
+# Probability of Alarm Given Mary Called
+result3 = alarm_infer.query(variables=["Alarm"], evidence={"MaryCalls": "yes"})
+
+if __name__ == "__main__":
+    print(result1)
+    print(result2)
+    print(result3)
