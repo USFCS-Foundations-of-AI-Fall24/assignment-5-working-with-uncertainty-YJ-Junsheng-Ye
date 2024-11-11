@@ -1,20 +1,17 @@
-import random
-import codecs
-import os
-import numpy as np
 import argparse
-
 from collections import defaultdict
 
+import numpy as np
 
-# observations
+
+# Observations
 class Observation:
     def __init__(self, stateseq, outputseq):
         self.stateseq = stateseq   # sequence of states
         self.outputseq = outputseq  # sequence of outputs
 
     def __str__(self):
-        return ' '.join(self.stateseq)+'\n'+' '.join(self.outputseq)+'\n'
+        return ' '.join(self.stateseq) + '\n' + ' '.join(self.outputseq) + '\n'
 
     def __repr__(self):
         return self.__str__()
@@ -23,222 +20,231 @@ class Observation:
         return len(self.outputseq)
 
 
-# hmm model
+# HMM Model
 class HMM:
-    def __init__(self, transitions=defaultdict(dict), emissions=defaultdict(dict)):
-        """creates a model from transition and emission probabilities
-        e.g. {'happy': {'silent': '0.2', 'meow': '0.3', 'purr': '0.5'},
-              'grumpy': {'silent': '0.5', 'meow': '0.4', 'purr': '0.1'},
-              'hungry': {'silent': '0.2', 'meow': '0.6', 'purr': '0.2'}}"""
-        self.transitions = transitions
-        self.emissions = emissions
+    def __init__(self, transitions=None, emissions=None):
+        """Creates a model from transition and emission probabilities."""
+        self.transitions = defaultdict(dict) if transitions is None else transitions
+        self.emissions = defaultdict(dict) if emissions is None else emissions
 
     def load(self, basename):
-        """reads HMM structure from transition (basename.trans),
-        and emission (basename.emit) files,
-        as well as the probabilities."""
-        # transition file of basename
+        """Reads HMM structure from transition (basename.trans),
+        and emission (basename.emit) files, including the probabilities."""
+        # Load transition probabilities
         with open(f"{basename}.trans", "r") as f:
-            for line in f.readlines():
-                state0, state1, prob = line.split(" ")
-                self.transitions[state0][state1] = float(prob.strip())
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.strip().split()
+                if len(parts) != 3:
+                    raise ValueError(f"Invalid line in transitions file: {line}")
+                state0, state1, prob = parts
+                self.transitions[state0][state1] = float(prob)
 
+            # Handle initial transitions
+            f.seek(0)
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.strip().split()
+                if parts[0] == '#':
+                    if len(parts) != 3:
+                        raise ValueError(f"Invalid initial transition line: {line}")
+                    _, state1, prob = parts
+                    self.transitions['#'][state1] = float(prob)
+
+        # Load emission probabilities
         with open(f"{basename}.emit", "r") as f:
-            for line in f.readlines():
-                state, observation, prob = line.split(" ")
-                self.emissions[state][observation] = float(prob.strip())
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) != 3:
+                    raise ValueError(f"Invalid line in emissions file: {line}")
+                state, emission, prob = parts
+                self.emissions[state][emission] = float(prob)
 
     def generate(self, n):
-        """return an n-length observation by randomly sampling from this HMM."""
-        # RESULT STORAGE
+        """Generates an n-length observation by randomly sampling from this HMM."""
+        # Result storage
         res_state, res_emit = [], []
 
-        # INITIAL STATES & PROBABILITIES of states
-        states = [state for state in self.transitions if state != '#']
-        init_tran_probs = [prob for prob in self.transitions['#'].values()]
+        # Initial states & probabilities
+        if '#' not in self.transitions:
+            raise ValueError("No initial transitions found in the model.")
+        initial_transitions = self.transitions['#']
+        if not initial_transitions:
+            raise ValueError("Initial transitions are empty.")
+        states_probs = list(initial_transitions.items())
+        states, init_tran_probs = zip(*states_probs)
+        init_tran_probs = [float(p) for p in init_tran_probs]
         curr_state = np.random.choice(a=states, p=init_tran_probs)
 
-        # INITIAL STATES & PROBABILITIES of emissions
-        emits = [emit for emit in self.emissions[curr_state]]
-        init_emit_probs = [prob for prob in self.emissions[curr_state].values()]
-        curr_emit = np.random.choice(a=emits, p=init_emit_probs)
+        # Generate emissions
+        while len(res_emit) < n:
+            # Emission from current state
+            emissions = self.emissions[curr_state]
+            emits_probs = list(emissions.items())
+            emits, emit_probs = zip(*emits_probs)
+            emit_probs = [float(p) for p in emit_probs]
+            curr_emit = np.random.choice(a=emits, p=emit_probs)
 
-        # save initial state and emit
-        res_state.append(curr_state)
-        res_emit.append(curr_emit)
-
-        while n > 1:
-            # GET CORRESPONDING PROBABILITIES base on current state
-            curr_state_probs = [prob for prob in self.transitions[curr_state].values()]
-            # UPDATE CURRENT STATE: a->input array; p->corresponding weights array
-            curr_state = np.random.choice(a=states, p=curr_state_probs)
-
-            # UPDATE CURRENT EMIT base on current state
-            curr_emit_candidates = [emit for emit in self.emissions[curr_state]]
-            curr_emit_probs = [prob for prob in self.emissions[curr_state].values()]
-            curr_emit = np.random.choice(a=curr_emit_candidates, p=curr_emit_probs)
-
+            # Save state and emission
             res_state.append(curr_state)
             res_emit.append(curr_emit)
 
-            n -= 1
+            # Transition to next state
+            transitions = self.transitions.get(curr_state, {})
+            if not transitions:
+                # If no transitions from current state, stop generating
+                break
+            next_states_probs = list(transitions.items())
+            next_states, next_probs = zip(*next_states_probs)
+            next_probs = [float(p) for p in next_probs]
+            curr_state = np.random.choice(a=next_states, p=next_probs)
 
-        # create a observation instance, and the attribute will be the input for the forward and viterbi
         return Observation(res_state, res_emit)
 
     def forward(self, observation):
         """
-        Viterbi algorithm. Given an Observation (a list of outputs or emissions)
-        determine the most likely sequence of states.
-        allocate a matrix of s states and n observations.
-        :param observation: Given an Observation (a list of outputs or emissions)
-        :return: the probability matrix after allocation
+        Forward algorithm. Given an Observation (a list of outputs or emissions)
+        determine the probability matrix.
+        :param observation: List of observations
+        :return: The forward probability matrix
         """
-        # initialize matrix row: states|col: observations
         states = [s for s in self.transitions if s != '#']
-        # +1 for index column
-        matrix = [[0.0 for _ in range(len(observation))] for _ in range(len(states))]
-        # set hash "#" to 1.0
+        n_states = len(states)
+        n_obs = len(observation)
 
-        # init first column
-        for rowNum in range(len(states)):
-            # KEY: no emission prob for current <state, observation>
-            if observation[0] not in self.emissions[states[rowNum]]:
-                matrix[rowNum][0] = 0.0
-            else:
-                # transfer from # -> current state
-                # given current state, the prob of current observation
-                matrix[rowNum][0] = (self.emissions[states[rowNum]][observation[0]]
-                                     * self.transitions['#'][states[rowNum]] * 1)
+        # Initialize the forward matrix with zeros
+        forward_matrix = np.zeros((n_states, n_obs))
 
-        # start to make observations
-        for colNum in range(1, len(observation)):        # for each day in the timeline(col)
-            for rowNum in range(0, len(states)):         # for each state in this day(row)
-                total = 0
-                for subRowNum in range(0, len(states)):  # for each probable PREVIOUS state
-                    # emission prob: [states[rowNum]][observation[colNum]] current state -> current observation
-                    # transition prob: states[subRowNum][states[rowNum]] the probable previous state -> current state
-                    # previous state prob: the probable previous state
+        # Initialize first column
+        for i, state in enumerate(states):
+            emit_prob = self.emissions[state].get(observation[0], 0.0)
+            init_trans_prob = self.transitions['#'].get(state, 0.0)
+            forward_matrix[i, 0] = emit_prob * init_trans_prob
 
-                    # KEY: no emission prob for current <state, observation>
-                    if observation[colNum] not in self.emissions[states[rowNum]]:
-                        continue
+        # Iterate over the observations
+        for t in range(1, n_obs):
+            for j, curr_state in enumerate(states):
+                emit_prob = self.emissions[curr_state].get(observation[t], 0.0)
+                if emit_prob == 0.0:
+                    forward_matrix[j, t] = 0.0
+                    continue
+                transition_probs = [self.transitions[prev_state].get(curr_state, 0.0) for prev_state in states]
+                forward_matrix[j, t] = emit_prob * np.dot(forward_matrix[:, t - 1], transition_probs)
 
-                    total += (self.emissions[states[rowNum]][observation[colNum]]
-                              * self.transitions[states[subRowNum]][states[rowNum]] * matrix[subRowNum][colNum-1])
-                # assign the total prob for this <state, observation> cell
-                matrix[rowNum][colNum] = total
-
-        return matrix
+        return forward_matrix
 
     def predict_obs_states(self, matrix, final=False):
         """
-        predict the state of each observation in the sequence
-        :param final: whether we are looking for the state for the final observation
-        :param matrix: the matrix after probability allocation by forward
-        :return: a sequence of states or the final state
+        Predict the state of each observation in the sequence using the forward matrix.
+        :param final: Whether to return only the final state.
+        :param matrix: The forward probability matrix.
+        :return: A list of states or the final state.
         """
         states = [s for s in self.transitions if s != '#']
-        result = []
-        for colNum in range(len(matrix[0])):
-            obs_states = [(rowNum, rowContent[colNum]) for rowNum, rowContent in enumerate(matrix)]
-            obs_row = max(obs_states, key=lambda x: x[1])[0]
-            result.append(states[obs_row])
-
-        return [result[-1]] if final else result
+        if final:
+            # Return the state with the highest probability in the last column
+            last_probs = matrix[:, -1]
+            max_index = np.argmax(last_probs)
+            return [states[max_index]]
+        else:
+            # For each observation, return the state with the highest probability
+            predicted_states = [states[np.argmax(matrix[:, t])] for t in range(matrix.shape[1])]
+            return predicted_states
 
     def viterbi(self, observation):
         """
-        given an observation, find and return the state sequence that generated
-        the output sequence, using the Viterbi algorithm.
+        Viterbi algorithm. Given an Observation, find and return the most likely sequence of states.
+        :param observation: List of observations
+        :return: Most likely sequence of states
         """
         states = [s for s in self.transitions if s != '#']
+        n_states = len(states)
+        n_obs = len(observation)
 
-        # initiate matrix and back_pointers
-        matrix = [[0.0 for _ in range(len(observation))] for _ in range(len(states))]
-        back_pointers = [[0 for _ in range(len(observation))] for _ in range(len(states))]
+        # Initialize the Viterbi matrix and back pointers
+        viterbi_matrix = np.zeros((n_states, n_obs))
+        back_pointers = np.zeros((n_states, n_obs), dtype=int)
 
-        # initiate first column for matrix
-        for rowNum in range(len(states)):
+        # Initialize first column
+        for i, state in enumerate(states):
+            emit_prob = self.emissions[state].get(observation[0], 0.0)
+            init_trans_prob = self.transitions['#'].get(state, 0.0)
+            viterbi_matrix[i, 0] = emit_prob * init_trans_prob
+            back_pointers[i, 0] = -1  # No predecessor
 
-            # no emission prob for current <state, observation>
-            if observation[0] not in self.emissions[states[rowNum]]:
-                matrix[rowNum][0] = 0.0
-            else:
-                # transfer from # -> current state
-                matrix[rowNum][0] = self.emissions[states[rowNum]][observation[0]] * self.transitions['#'][states[rowNum]] * 1
-
-        # initiate first column for back_pointers
-        for rowNum in range(len(states)):
-            # previous state must be '#', set to -1 as backward ending
-            back_pointers[rowNum][0] = -1
-
-        # generate back pointers for each <state, observation>
-        for colNum in range(1, len(observation)):
-            for rowNum in range(len(states)):
-
-                max_row, max_prob = -1, -1
-                for subRowNum in range(len(states)):
-
-                    # no emission prob for current <state, observation>
-                    if observation[colNum] not in self.emissions[states[rowNum]]:
-                        continue
-
-                    # emission: [states[rowNum]][observation[colNum]] given current state -> current observation
-                    # transition: [states[subRowNum]][states[rowNum]] previous state -> current state
-                    # previous state prob: matrix[subRowNum][colNum-1]
-                    prob = self.emissions[states[rowNum]][observation[colNum]] * self.transitions[states[subRowNum]][states[rowNum]] * matrix[subRowNum][colNum-1]
+        # Fill in the Viterbi matrix
+        for t in range(1, n_obs):
+            for j, curr_state in enumerate(states):
+                emit_prob = self.emissions[curr_state].get(observation[t], 0.0)
+                max_prob = 0.0
+                max_state = 0
+                for i, prev_state in enumerate(states):
+                    trans_prob = self.transitions[prev_state].get(curr_state, 0.0)
+                    prob = viterbi_matrix[i, t - 1] * trans_prob * emit_prob
                     if prob > max_prob:
-                        max_prob = round(prob, 9)
-                        max_row = subRowNum
+                        max_prob = prob
+                        max_state = i
+                viterbi_matrix[j, t] = max_prob
+                back_pointers[j, t] = max_state
 
-                # select highest probability and corresponding stateNum(rowNum) for current <state, observation>
-                matrix[rowNum][colNum] = max_prob
-                back_pointers[rowNum][colNum] = max_row
+        # Backtrack to find the most probable state sequence
+        state_sequence = []
+        last_state = np.argmax(viterbi_matrix[:, -1])
+        state_sequence.append(states[last_state])
 
-        # find start point for going backward, compare with prob of each cell<state, observation>
-        curr_row = max([(rowNum, row[-1]) for rowNum, row in enumerate(matrix)], key=lambda x: x[1])[0]
-        curr_col = len(observation) - 1
+        for t in range(n_obs - 1, 0, -1):
+            last_state = back_pointers[last_state, t]
+            state_sequence.append(states[last_state])
 
-        # update curr_ptr for new state
-        curr_ptr = back_pointers[curr_row][curr_col]
+        state_sequence.reverse()
+        return state_sequence
 
-        # add start state
-        path = [states[curr_row]]
-        while curr_col > 0:
-            path.append(states[curr_ptr])
-            curr_col -= 1
-            curr_ptr = back_pointers[curr_ptr][curr_col]
-
-        return path[::-1]
+    def is_safe_spot(self, state):
+        """
+        Check if the given state is a safe landing spot for the lander.
+        :param state: The state to check.
+        :return: True if safe, False otherwise.
+        """
+        safe_spots = {'4,3', '3,4', '4,4', '2,5', '5,5'}
+        return state in safe_spots
 
 
 def read_obs(filename):
     """
-    helper function to read observation list from obs file
+    Helper function to read observation lists from an obs file.
     :param filename: obs filename
-    :return: a list of observation sequence
+    :return: A list of observation sequences
     """
     obs_ls = []
     with open(filename) as f:
-        for line in f.readlines():
-            if line != '\n':
-                obs_ls.append(line.strip().split(" "))
+        for line in f:
+            if line.strip():
+                obs_ls.append(line.strip().split())
     return obs_ls
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="HMM arguments parser", epilog='usage examples:\n|'
-                                     'python hmm.py partofspeech.browntags.trained --generate 20\n|'
-                                     'python hmm.py partofspeech.browntags.trained --forward ambiguous_sents.obs\n|'
-                                     'python hmm.py cat --forward my_sample_cat.obs\n|'
-                                     'python hmm.py partofspeech.browntags.trained --viterbi ambiguous_sents.obs\n|')
+    parser = argparse.ArgumentParser(
+        description="HMM arguments parser",
+        epilog='Usage examples:\n|'
+               'python hmm.py partofspeech --generate 10\n|'
+               'python hmm.py partofspeech --forward ambiguous_sents.obs\n|'
+               'python hmm.py cat --forward cat_sequence.obs\n|'
+               'python hmm.py partofspeech.browntags.trained --viterbi ambiguous_sents.obs\n|')
     parser.add_argument('file_name', help='training file for hmm to load')
-    parser.add_argument('--generate', metavar='<count>', help='generate <n> random emissions', default=None)
+    parser.add_argument('--generate', metavar='<count>',
+                        help='generate <n> random emissions', default=None)
     parser.add_argument('--forward', metavar='<filename>',
                         help='generate sequence of states based on a sequence of observations from <filename>', default=None)
     parser.add_argument('--viterbi', metavar='<filename>',
-                        help='generate most likely sequence of states base on input observations from <filename>', default=None)
+                        help='generate most likely sequence of states based on input observations from <filename>', default=None)
     args = parser.parse_args()
 
     hmm = HMM()
@@ -246,8 +252,7 @@ if __name__ == '__main__':
 
     if args.generate:
         obs = hmm.generate(int(args.generate))
-        print(obs)
-
+        print(' '.join(obs.outputseq))
     elif args.forward:
         obs_ls = read_obs(filename=args.forward)
         for obs in obs_ls:
@@ -255,10 +260,37 @@ if __name__ == '__main__':
             final_state = hmm.predict_obs_states(matrix, final=True)
             print(f"[Observation Sequence] {' '.join(obs)}")
             print(f"[Most Likely Final State] [{final_state[0]}]")
-
+            if 'lander' in args.file_name:
+                if hmm.is_safe_spot(final_state[0]):
+                    print("Safe to land!")
+                else:
+                    print("Not safe to land!")
     elif args.viterbi:
         obs_ls = read_obs(filename=args.viterbi)
         for obs in obs_ls:
             seq = hmm.viterbi(obs)
             print(f"{' '.join(seq)}")
             print(f"{' '.join(obs)}")
+            if 'lander' in args.file_name:
+                if hmm.is_safe_spot(seq[-1]):
+                    print("Safe to land!")
+                else:
+                    print("Not safe to land!")
+
+"""
+[Generate list of observations]
+python HMM.py cat --generate 10
+python HMM.py lander --generate 10
+python HMM.py partofspeech --generate 10
+
+[Forward]
+python HMM.py cat --forward cat_sequence.obs
+python HMM.py lander --forward lander_sequence.obs
+python HMM.py partofspeech --forward ambiguous_sents.obs
+
+[Viterbi]
+python HMM.py cat --viterbi cat_sequence.obs
+python HMM.py lander --viterbi lander_sequence.obs
+python HMM.py partofspeech --viterbi ambiguous_sents.obs
+
+"""
