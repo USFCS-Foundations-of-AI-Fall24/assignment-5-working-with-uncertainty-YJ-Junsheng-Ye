@@ -293,4 +293,15 @@ python HMM.py cat --viterbi cat_sequence.obs
 python HMM.py lander --viterbi lander_sequence.obs
 python HMM.py partofspeech --viterbi ambiguous_sents.obs
 
+[Core Logic]
+In the Forward algorithm of a Hidden Markov Model (HMM), for each time step t, 
+we calculate the probability of being in a specific state given the observations so far 
+by summing up the probabilities from all possible previous states. 
+This process accumulates the probabilities across all potential paths leading to each state.
+
+For the Viterbi algorithm, 
+instead of summing probabilities, we select the maximum probability path leading to each state for a given observation. 
+We track the best (most likely) path by recording the state index at each time step, 
+which allows for backtracking at the end to identify the most probable sequence of states.
+
 """
